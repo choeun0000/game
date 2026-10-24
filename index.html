@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teachable Machine Pose Runner</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- TensorFlow.js & Teachable Machine Pose Library -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8.6/dist/teachablemachine-pose.min.js"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;800&display=swap');
+        body {
+            font-family: 'Pretendard', sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            touch-action: manipulation;
+        }
+
+        /* Canvas Canvas Wrapper Styling */
+        #gameCanvas {
+            background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+            border-bottom: 4px solid #3b82f6;
+        }
+
+        /* Loading Spinner */
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: #3b82f6;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-between p-4 md:p-6 bg-slate-900">
+
+    <!-- Header Section -->
+    <header class="w-full max-w-5xl flex flex-col sm:flex-row items-center justify-between gap-4 mb-4">
+        <div class="flex items-center gap-3">
+            <div class="p-3 bg-blue-600 rounded-xl shadow-lg shadow-blue-500/30">
+                <i class="fa-solid fa-person-running text-2xl text-white"></i>
+            </div>
+            <div>
+                <h1 class="text-2xl font-extrabold tracking-tight text-white">Pose Obstacle Runner</h1>
+                <p class="text-xs text-slate-400">티처블 머신 포즈 인식 기반 달리기 게임</p>
+            </div>
+        </div>
+
+        <!-- Realtime Status Indicators -->
+        <div class="flex items-center gap-4 bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-700">
+            <div class="text-center">
+                <span class="text-xs text-slate-400 block">SCORE</span>
+                <span id="scoreDisplay" class="text-xl font-black text-amber-400">0</span>
+            </div>
+            <div class="h-8 w-[1px] bg-slate-700"></div>
+            <div class="text-center">
+                <span class="text-xs text-slate-400 block">SPEED</span>
+                <span id="speedDisplay" class="text-xl font-bold text-emerald-400">1.0x</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Game Container -->
+    <main class="w-full max-w-5xl flex flex-col lg:flex-row gap-6 items-stretch justify-center my-auto">
+        
+        <!-- Left Column: Game Canvas & HUD Overlays -->
+        <div class="flex-1 flex flex-col items-center relative rounded-2xl overflow-hidden bg-slate-800 border border-slate-700 shadow-2xl">
+            <!-- Game Canvas -->
+            <canvas id="gameCanvas" class="w-full h-[320px] sm:h-[400px] block"></canvas>
+
+            <!-- Overlay Message (Start / Game Over / Loading) -->
+            <div id="gameOverlay" class="absolute inset-0 bg-slate-900/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center z-10">
+                <div id="loadingBox" class="flex flex-col items-center gap-3">
+                    <div class="spinner"></div>
+                    <p id="loadingStatusText" class="text-sm font-semibold text-slate-300">티처블 머신 모델 및 웹캠 로딩 중...</p>
+                </div>
+
+                <div id="startBox" class="hidden flex flex-col items-center gap-4">
+                    <div class="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center text-blue-400 text-3xl mb-1 animate-bounce">
+                        <i class="fa-solid fa-circle-play"></i>
+                    </div>
+                    <h2 class="text-2xl font-bold text-white">준비 되셨나요?</h2>
+                    <p class="text-sm text-slate-300 max-w-xs">
+                        카메라 앞에서 동작을 취해 게임을 제어하세요!<br>
+                        <span class="text-emerald-400 font-semibold">RIGHT HAND</span>: 점프<br>
+                        <span class="text-amber-400 font-semibold">LEFT HAND</span>: 숙이기
+                    </p>
+                    <button id="startBtn" class="mt-2 px-8 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold rounded-xl shadow-lg transition duration-200 transform hover:scale-105 active:scale-95 flex items-center gap-2">
+                        <i class="fa-solid fa-play"></i> 게임 시작하기
+                    </button>
+                </div>
+
+                <div id="gameOverBox" class="hidden flex flex-col items-center gap-3">
+                    <div class="w-16 h-16 bg-rose-500/20 rounded-full flex items-center justify-center text-rose-500 text-3xl mb-1">
+                        <i class="fa-solid fa-skull"></i>
+                    </div>
+                    <h2 class="text-2xl font-black text-rose-400">GAME OVER</h2>
+                    <p class="text-slate-300 text-sm">장애물에 충돌했습니다!</p>
+                    <div class="my-2 bg-slate-800/80 px-6 py-3 rounded-xl border border-slate-700">
+                        <span class="text-xs text-slate-400 block">최종 점수</span>
+                        <span id="finalScore" class="text-3xl font-extrabold text-amber-400">0</span>
+                    </div>
+                    <button id="restartBtn" class="mt-2 px-8 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl shadow-lg transition duration-200 transform hover:scale-105 active:scale-95 flex items-center gap-2">
+                        <i class="fa-solid fa-rotate-right"></i> 다시 시작
+                    </button>
+                </div>
+            </div>
+
+            <!-- Active Pose Display Ribbon -->
+            <div class="w-full bg-slate-950/80 border-t border-slate-700/50 p-3 flex items-center justify-between px-6">
+                <span class="text-xs font-semibold text-slate-400">현재 인식 동작:</span>
+                <span id="poseBadge" class="px-3 py-1 text-xs font-extrabold rounded-full bg-slate-700 text-slate-300 transition-all duration-200">
+                    대기 중...
+                </span>
+            </div>
+        </div>
+
+        <!-- Right Column: Webcam & Prediction Dashboard -->
+        <div class="w-full lg:w-80 flex flex-col gap-4">
+            
+            <!-- Webcam Stream Box -->
+            <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 flex flex-col items-center shadow-xl">
+                <div class="w-full flex items-center justify-between mb-3">
+                    <span class="text-xs font-bold text-slate-300 flex items-center gap-2">
+                        <i class="fa-solid fa-video text-blue-400"></i> 웹캠 피드
+                    </span>
+                    <span id="camStatus" class="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        연결 준비 중
+                    </span>
+                </div>
+                <div class="relative w-full aspect-square bg-slate-900 rounded-xl overflow-hidden border border-slate-700 flex items-center justify-center">
+                    <canvas id="poseWebcamCanvas" class="w-full h-full object-cover"></canvas>
+                </div>
+            </div>
+
+            <!-- Pose Prediction Bars -->
+            <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 shadow-xl flex-1 flex flex-col justify-between">
+                <div>
+                    <h3 class="text-xs font-bold text-slate-300 mb-3 flex items-center gap-2">
+                        <i class="fa-solid fa-chart-simple text-purple-400"></i> 포즈 인식 확률
+                    </h3>
+                    <div id="labelContainer" class="flex flex-col gap-3">
+                        <!-- Dynamically populated label bars -->
+                    </div>
+                </div>
+
+                <!-- Game Controls Tip -->
+                <div class="mt-4 p-3 bg-slate-900/60 rounded-xl border border-slate-700/60 text-[11px] text-slate-400 leading-relaxed">
+                    <div class="font-bold text-slate-300 mb-1 flex items-center gap-1">
+                        <i class="fa-solid fa-lightbulb text-amber-400"></i> 포즈 가이드
+                    </div>
+                    <ul class="list-disc list-inside space-y-0.5">
+                        <li><strong class="text-emerald-400">RIGHT HAND</strong>: 바닥 장애물 점프</li>
+                        <li><strong class="text-amber-400">LEFT HAND</strong>: 공중 장애물 슬라이딩</li>
+                        <li><strong class="text-slate-300">REST</strong>: 기본 달리기</li>
+                    </ul>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="mt-4 text-center text-xs text-slate-500">
+        Powered by TensorFlow.js & Teachable Machine Pose Model
+    </footer>
+
+    <!-- Game & Pose AI Logic Script -->
+    <script>
+        // Teachable Machine Model URL
+        const MODEL_URL = "https://teachablemachine.withgoogle.com/models/K64GdN316/";
+
+        let model, webcam, ctxPose, maxPredictions = 0;
+        let currentPose = "REST";
+
+        // Game Variables
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        let gameState = "LOADING"; // "LOADING", "START", "PLAYING", "GAMEOVER"
+        let score = 0;
+        let speedMultiplier = 1.0;
+        let frameCount = 0;
+        let animationFrameId = null;
+
+        // Player Attributes
+        const player = {
+            x: 80,
+            y: 0,
+            baseY: 0,
+            width: 44,
+            height: 64,
+            baseHeight: 64,
+            duckHeight: 32,
+            vy: 0,
+            gravity: 0.8,
+            jumpStrength: -14,
+            isGrounded: true,
+            isDucking: false,
+            color: '#3b82f6'
+        };
+
+        // Obstacles Array
+        let obstacles = [];
+
+        // UI Element References
+        const gameOverlay = document.getElementById("gameOverlay");
+        const loadingBox = document.getElementById("loadingBox");
+        const startBox = document.getElementById("startBox");
+        const gameOverBox = document.getElementById("gameOverBox");
+        const startBtn = document.getElementById("startBtn");
+        const restartBtn = document.getElementById("restartBtn");
+        const scoreDisplay = document.getElementById("scoreDisplay");
+        const speedDisplay = document.getElementById("speedDisplay");
+        const finalScore = document.getElementById("finalScore");
+        const poseBadge = document.getElementById("poseBadge");
+        const labelContainer = document.getElementById("labelContainer");
+        const camStatus = document.getElementById("camStatus");
+
+        // Resize Canvas to Match Container Size
+        function resizeCanvas() {
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            player.baseY = canvas.height - 70;
+            if (player.isGrounded && !player.isDucking) {
+                player.y = player.baseY - player.height;
+            }
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        // Initialize Teachable Machine Pose Model
+        async function initPoseModel() {
+            try {
+                const modelURL = MODEL_URL + "model.json";
+                const metadataURL = MODEL_URL + "metadata.json";
+
+                // Load Pose Model
+                model = await tmPose.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
+
+                // Setup Webcam
+                const size = 200;
+                const flip = true; 
+                webcam = new tmPose.Webcam(size, size, flip);
+                await webcam.setup(); 
+                await webcam.play();
+
+                // Setup Webcam Canvas
+                const poseCanvas = document.getElementById("poseWebcamCanvas");
+                poseCanvas.width = size;
+                poseCanvas.height = size;
+                ctxPose = poseCanvas.getContext("2d");
+
+                // Setup Labels UI
+                labelContainer.innerHTML = "";
+                for (let i = 0; i < maxPredictions; i++) {
+                    const classTitle = model.getClassLabels()[i];
+                    const wrapper = document.createElement("div");
+                    wrapper.className = "space-y-1";
+                    wrapper.innerHTML = `
+                        <div class="flex justify-between text-xs font-semibold">
+                            <span class="text-slate-300">${classTitle}</span>
+                            <span id="prob-text-${i}" class="text-slate-400">0%</span>
+                        </div>
+                        <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden border border-slate-700/50">
+                            <div id="prob-bar-${i}" class="bg-blue-500 h-full w-0% transition-all duration-150"></div>
+                        </div>
+                    `;
+                    labelContainer.appendChild(wrapper);
+                }
+
+                camStatus.textContent = "웹캠 작동 중";
+                camStatus.className = "text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
+
+                // Model Loaded successfully -> Show Start UI
+                gameState = "START";
+                loadingBox.classList.add("hidden");
+                startBox.classList.remove("hidden");
+
+                // Start Pose Detection Loop
+                window.requestAnimationFrame(poseLoop);
+
+            } catch (error) {
+                console.error("Model/Webcam Load Error:", error);
+                document.getElementById("loadingStatusText").textContent = "웹캠 또는 모델 불러오기 실패! 카메라 권한을 확인해주세요.";
+                document.getElementById("loadingStatusText").classList.add("text-rose-400");
+            }
+        }
+
+        // Continuous Pose Prediction Loop
+        async function poseLoop() {
+            webcam.update();
+            await predictPose();
+            window.requestAnimationFrame(poseLoop);
+        }
+
+        // Predict Pose Frame
+        async function predictPose() {
+            const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
+            const prediction = await model.predict(posenetOutput);
+
+            let highestProb = 0;
+            let detectedClass = "REST";
+
+            for (let i = 0; i < maxPredictions; i++) {
+                const className = prediction[i].className;
+                const probability = prediction[i].probability;
+                const percentage = Math.round(probability * 100);
+
+                // Update UI Bars
+                const textElem = document.getElementById(`prob-text-${i}`);
+                const barElem = document.getElementById(`prob-bar-${i}`);
+                if (textElem && barElem) {
+                    textElem.textContent = `${percentage}%`;
+                    barElem.style.width = `${percentage}%`;
+                    
+                    if (probability > 0.6) {
+                        barElem.className = "bg-emerald-500 h-full transition-all duration-150";
+                    } else {
+                        barElem.className = "bg-blue-500 h-full transition-all duration-150";
+                    }
+                }
+
+                if (probability > highestProb) {
+                    highestProb = probability;
+                    detectedClass = className;
+                }
+            }
+
+            // Pose Threshold Check
+            if (highestProb > 0.55) {
+                currentPose = detectedClass;
+            } else {
+                currentPose = "REST";
+            }
+
+            updatePoseBadge(currentPose);
+            handlePoseAction(currentPose);
+
+            // Render Skeleton on Webcam Canvas
+            if (pose) {
+                ctxPose.drawImage(webcam.canvas, 0, 0);
+                tmPose.drawKeypoints(pose.keypoints, 0.5, ctxPose);
+                tmPose.drawSkeleton(pose.keypoints, 0.5, ctxPose);
+            }
+        }
+
+        // Update Active Action Badge UI
+        function updatePoseBadge(pose) {
+            poseBadge.textContent = pose;
+            if (pose === "RIGHT HAND") {
+                poseBadge.className = "px-3 py-1 text-xs font-extrabold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
+            } else if (pose === "LEFT HAND") {
+                poseBadge.className = "px-3 py-1 text-xs font-extrabold rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30";
+            } else {
+                poseBadge.className = "px-3 py-1 text-xs font-extrabold rounded-full bg-slate-700 text-slate-300";
+            }
+        }
+
+        // Translate Pose to Player Movement
+        function handlePoseAction(pose) {
+            if (gameState !== "PLAYING") return;
+
+            if (pose === "RIGHT HAND") {
+                // JUMP
+                if (player.isGrounded) {
+                    player.vy = player.jumpStrength;
+                    player.isGrounded = false;
+                }
+            } else if (pose === "LEFT HAND") {
+                // DUCK / SLIDE
+                if (player.isGrounded) {
+                    player.isDucking = true;
+                }
+            } else {
+                // REST
+                player.isDucking = false;
+            }
+        }
+
+        // Keyboard Controls Fallback (For Testing)
+        window.addEventListener('keydown', (e) => {
+            if (gameState !== "PLAYING") return;
+            if (e.key === "ArrowUp" && player.isGrounded) {
+                player.vy = player.jumpStrength;
+                player.isGrounded = false;
+            } else if (e.key === "ArrowDown" && player.isGrounded) {
+                player.isDucking = true;
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.key === "ArrowDown") {
+                player.isDucking = false;
+            }
+        });
+
+        // Start / Restart Game
+        function startGame() {
+            gameState = "PLAYING";
+            gameOverlay.classList.add("hidden");
+            startBox.classList.add("hidden");
+            gameOverBox.classList.add("hidden");
+
+            // Reset Game Variables
+            score = 0;
+            speedMultiplier = 1.0;
+            obstacles = [];
+            frameCount = 0;
+
+            player.height = player.baseHeight;
+            player.y = player.baseY - player.height;
+            player.vy = 0;
+            player.isGrounded = true;
+            player.isDucking = false;
+
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            gameLoop();
+        }
+
+        function gameOver() {
+            gameState = "GAMEOVER";
+            finalScore.textContent = Math.floor(score);
+            gameOverlay.classList.remove("hidden");
+            gameOverBox.classList.remove("hidden");
+        }
+
+        // Spawn Random Obstacles
+        function spawnObstacle() {
+            // Type: "GROUND" (Jump over) or "AIR" (Duck under)
+            const type = Math.random() < 0.5 ? "GROUND" : "AIR";
+            const baseSpeed = 6;
+
+            if (type === "GROUND") {
+                obstacles.push({
+                    type: "GROUND",
+                    x: canvas.width + 20,
+                    y: player.baseY - 45,
+                    width: 32,
+                    height: 45,
+                    color: '#ef4444' // Red
+                });
+            } else {
+                obstacles.push({
+                    type: "AIR",
+                    x: canvas.width + 20,
+                    y: player.baseY - 75,
+                    width: 40,
+                    height: 35,
+                    color: '#f59e0b' // Yellow/Amber
+                });
+            }
+        }
+
+        // Main Game Update & Render Loop
+        function gameLoop() {
+            if (gameState !== "PLAYING") return;
+
+            frameCount++;
+            score += 0.1 * speedMultiplier;
+            speedMultiplier = 1.0 + Math.floor(score / 100) * 0.15; // Gradually speed up
+
+            // Update HUD
+            scoreDisplay.textContent = Math.floor(score);
+            speedDisplay.textContent = speedMultiplier.toFixed(1) + "x";
+
+            // Clear Screen
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Ground Line
+            ctx.beginPath();
+            ctx.moveTo(0, player.baseY);
+            ctx.lineTo(canvas.width, player.baseY);
+            ctx.strokeStyle = "#475569";
+            ctx.lineWidth = 4;
+            ctx.stroke();
+
+            // Background Decorative Lines (Parallax Speed Feeling)
+            ctx.fillStyle = "#334155";
+            const lineOffset = (frameCount * 8 * speedMultiplier) % 60;
+            for (let x = -lineOffset; x < canvas.width; x += 60) {
+                ctx.fillRect(x, player.baseY + 10, 30, 3);
+            }
+
+            // Update Player Dynamics
+            if (player.isDucking && player.isGrounded) {
+                player.height = player.duckHeight;
+            } else {
+                player.height = player.baseHeight;
+            }
+
+            // Apply Gravity
+            player.vy += player.gravity;
+            player.y += player.vy;
+
+            // Ground Collision
+            if (player.y + player.height >= player.baseY) {
+                player.y = player.baseY - player.height;
+                player.vy = 0;
+                player.isGrounded = true;
+            }
+
+            // Draw Player Character (With Running/Ducking Animation Effect)
+            ctx.fillStyle = player.color;
+            ctx.beginPath();
+            ctx.roundRect(player.x, player.y, player.width, player.height, 8);
+            ctx.fill();
+
+            // Character Visual Details (Eyes & Pose State Indicator)
+            ctx.fillStyle = "#ffffff";
+            if (player.isDucking) {
+                // Ducking Eyes
+                ctx.fillRect(player.x + player.width - 12, player.y + 10, 6, 4);
+            } else {
+                // Standing Eyes
+                ctx.fillRect(player.x + player.width - 12, player.y + 12, 6, 6);
+            }
+
+            // Spawn Obstacles Periodically
+            const spawnInterval = Math.max(70, Math.floor(130 / speedMultiplier));
+            if (frameCount % spawnInterval === 0) {
+                spawnObstacle();
+            }
+
+            // Update and Render Obstacles
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const obs = obstacles[i];
+                obs.x -= 6 * speedMultiplier;
+
+                // Draw Obstacle
+                ctx.fillStyle = obs.color;
+                ctx.beginPath();
+                ctx.roundRect(obs.x, obs.y, obs.width, obs.height, 6);
+                ctx.fill();
+
+                // Draw Icon inside Obstacle
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "14px FontAwesome";
+                if (obs.type === "GROUND") {
+                    // Spike/Barrier visual
+                    ctx.fillRect(obs.x + 6, obs.y + 6, obs.width - 12, obs.height - 12);
+                } else {
+                    // Air Obstacle visual
+                    ctx.fillRect(obs.x + 6, obs.y + 6, obs.width - 12, obs.height - 12);
+                }
+
+                // Collision Detection (AABB)
+                if (
+                    player.x < obs.x + obs.width &&
+                    player.x + player.width > obs.x &&
+                    player.y < obs.y + obs.height &&
+                    player.y + player.height > obs.y
+                ) {
+                    gameOver();
+                    return;
+                }
+
+                // Remove Off-screen Obstacles
+                if (obs.x + obs.width < 0) {
+                    obstacles.splice(i, 1);
+                }
+            }
+
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // Event Listeners
+        startBtn.addEventListener('click', startGame);
+        restartBtn.addEventListener('click', startGame);
+
+        // Page Load Init
+        window.onload = () => {
+            resizeCanvas();
+            initPoseModel();
+        };
+    </script>
+</body>
+</html>
